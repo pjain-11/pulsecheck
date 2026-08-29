@@ -2,7 +2,7 @@
 
 PulseCheck is a lightweight API uptime and health monitoring platform designed to monitor HTTP endpoints, track response times, detect downtime, record incidents, and calculate uptime.
 
-> **Status:** Phase 3 — Monitor CRUD REST API (create / read / update / delete / activate). Actual HTTP health checking, scheduling and incident logic are still to come. The features below are planned and will be implemented in later phases.
+> **Status:** Phase 4 — manual health-check engine. PulseCheck can now make a real HTTP request to a monitor's URL, measure it, and record `UP`/`DOWN`. Automatic scheduling and incident logic are still to come. The features below are planned and will be implemented in later phases.
 
 ## Planned Features
 
@@ -72,12 +72,12 @@ pulsecheck/
 │       ├── config/        # env + Sequelize configuration
 │       ├── models/        # Sequelize models (Monitor, HealthCheck, Incident)
 │       ├── migrations/    # Sequelize migrations
-│       ├── routes/        # Express routers
+│       ├── routes/        # Express routers (monitors, health check)
 │       ├── controllers/   # HTTP layer (request -> service -> response)
-│       ├── services/      # business / persistence logic
+│       ├── services/      # monitor CRUD + health-check engine
 │       ├── validations/   # Joi request schemas
 │       ├── middlewares/   # validation + error handling
-│       └── utils/         # small shared helpers
+│       └── utils/         # helpers (ApiError, urlGuard, ...)
 ├── README.md
 └── .gitignore
 ```
@@ -279,6 +279,79 @@ editable fields** (`name`, `url`, `method`, `expected_status_code`,
 
 Deleting responds with `200 OK` and `{ "success": true, "message": "Monitor deleted successfully" }`.
 Unknown IDs return `404`; non-numeric IDs return `400`.
+
+## Health Check API
+
+```text
+POST /api/monitors/:id/check
+```
+
+Performs a **manual** health check against the configured monitor URL. It
+makes one HTTP request (using the monitor's `method` and `timeout`), measures
+the response time, decides `UP` / `DOWN`, then:
+
+- inserts a new row into `health_checks` with
+  `status`, `status_code`, `response_time` (ms), `error_message`, `checked_at`
+- updates `monitors.status` to the result (`is_active` is never changed)
+
+The health-check row and the monitor status update are written in a single
+database transaction. The outbound HTTP request happens **before** the
+transaction is opened.
+
+### UP vs DOWN
+
+- **UP** — the response status code exactly equals `expected_status_code`.
+  (A 2xx that is not the expected code is still `DOWN`.)
+- **DOWN** — the status code does not match, or the request fails
+  (DNS failure, connection refused, TLS error) or times out.
+
+### Response
+
+A completed check always returns `200 OK`, even when the target is `DOWN` —
+PulseCheck successfully determined the target's health. `4xx`/`5xx` are only
+used when PulseCheck cannot run the check at all.
+
+```json
+{
+  "success": true,
+  "message": "Health check completed",
+  "data": {
+    "monitor_id": 1,
+    "status": "UP",
+    "status_code": 200,
+    "response_time": 182,
+    "checked_at": "2026-08-30T03:00:00.000Z",
+    "error_message": null
+  }
+}
+```
+
+| Situation | HTTP | Body |
+| --- | --- | --- |
+| Check ran (target UP or DOWN) | `200` | `data` with the result |
+| Monitor `is_active = false` | `400` | `{ "success": false, "message": "Monitor is inactive" }` (no `health_checks` row) |
+| Monitor does not exist | `404` | `{ "success": false, "message": "Monitor not found" }` |
+| Non-numeric id | `400` | validation error |
+| URL blocked by SSRF guard | `400` | `{ "success": false, "message": "Monitor URL is not allowed: ..." }` |
+
+### Request details & SSRF note
+
+Every request sends `User-Agent: PulseCheck/1.0` and no authentication
+headers. The response body is **not** stored — only the status code, timing,
+and outcome.
+
+Before each request the URL is screened by a lightweight guard
+(`src/utils/urlGuard.js`): `http`/`https` only, and literal `localhost` /
+loopback / private / link-local addresses are rejected. **HTTP redirects are
+not followed** (`redirect: "manual"`), so a redirect cannot bounce the
+request to an internal target; a `3xx` response is compared to
+`expected_status_code` as-is. This is an MVP guard — it does not resolve DNS,
+so a public hostname pointing at a private address still passes. A production
+deployment needs DNS-resolution checks, connection pinning, and network-level
+egress controls.
+
+> Automatic scheduled monitoring will be added in a later phase; for now
+> checks only run when you call this endpoint.
 
 ## Environment Variables
 
