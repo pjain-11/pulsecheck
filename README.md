@@ -2,7 +2,7 @@
 
 PulseCheck is a lightweight API uptime and health monitoring platform designed to monitor HTTP endpoints, track response times, detect downtime, record incidents, and calculate uptime.
 
-> **Status:** Phase 2 — MySQL database schema (Sequelize models + migrations). API endpoints and monitoring logic are still to come. The features below are planned and will be implemented in later phases.
+> **Status:** Phase 3 — Monitor CRUD REST API (create / read / update / delete / activate). Actual HTTP health checking, scheduling and incident logic are still to come. The features below are planned and will be implemented in later phases.
 
 ## Planned Features
 
@@ -38,6 +38,9 @@ MySQL
 ORM:
 Sequelize
 
+Validation:
+Joi
+
 Scheduler:
 node-cron
 ```
@@ -66,9 +69,15 @@ pulsecheck/
 ├── frontend/      # Next.js application (App Router, JavaScript)
 ├── backend/       # Express application (JavaScript)
 │   └── src/
-│       ├── config/       # env + Sequelize configuration
-│       ├── models/       # Sequelize models (Monitor, HealthCheck, Incident)
-│       └── migrations/   # Sequelize migrations
+│       ├── config/        # env + Sequelize configuration
+│       ├── models/        # Sequelize models (Monitor, HealthCheck, Incident)
+│       ├── migrations/    # Sequelize migrations
+│       ├── routes/        # Express routers
+│       ├── controllers/   # HTTP layer (request -> service -> response)
+│       ├── services/      # business / persistence logic
+│       ├── validations/   # Joi request schemas
+│       ├── middlewares/   # validation + error handling
+│       └── utils/         # small shared helpers
 ├── README.md
 └── .gitignore
 ```
@@ -174,6 +183,102 @@ Response:
   "message": "PulseCheck API is running"
 }
 ```
+
+## Monitor API
+
+Base path: `/api/monitors`
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `POST` | `/api/monitors` | Create a monitor |
+| `GET` | `/api/monitors` | List all monitors (newest first) |
+| `GET` | `/api/monitors/:id` | Get a single monitor |
+| `PUT` | `/api/monitors/:id` | Replace a monitor's editable configuration |
+| `DELETE` | `/api/monitors/:id` | Delete a monitor (cascades to its health checks and incidents) |
+| `PATCH` | `/api/monitors/:id/status` | Activate / deactivate a monitor (`is_active` only) |
+
+### Responses
+
+All responses use a consistent envelope:
+
+```json
+{ "success": true, "message": "...", "data": {} }
+```
+
+```json
+{ "success": false, "message": "..." }
+```
+
+```json
+{ "success": false, "message": "Validation failed", "errors": [
+  { "field": "url", "message": "url must be a valid HTTP or HTTPS URL" }
+] }
+```
+
+### Create a monitor
+
+`POST /api/monitors`
+
+```json
+{
+  "name": "GitHub API",
+  "url": "https://api.github.com",
+  "method": "GET",
+  "expected_status_code": 200,
+  "check_interval": 5,
+  "timeout": 10000
+}
+```
+
+Only `name` and `url` are required. `method` (`GET`), `expected_status_code`
+(`200`), `check_interval` (`5` minutes) and `timeout` (`10000` ms) default if
+omitted. `status`, `is_active` and the timestamps are set by the backend and
+cannot be supplied by the client.
+
+Response — `201 Created`:
+
+```json
+{
+  "success": true,
+  "message": "Monitor created successfully",
+  "data": {
+    "id": 1,
+    "name": "GitHub API",
+    "url": "https://api.github.com",
+    "method": "GET",
+    "expected_status_code": 200,
+    "status": "UNKNOWN",
+    "is_active": true,
+    "check_interval": 5,
+    "timeout": 10000
+  }
+}
+```
+
+A new monitor's `status` is always `UNKNOWN`. It stays `UNKNOWN` until the
+health-check engine (Phase 4) runs a real check against the URL and sets it to
+`UP` or `DOWN`.
+
+### Update semantics
+
+`PUT /api/monitors/:id` replaces the full editable configuration, so **all six
+editable fields** (`name`, `url`, `method`, `expected_status_code`,
+`check_interval`, `timeout`) are required. To only toggle active state, use
+`PATCH /api/monitors/:id/status` with `{ "is_active": true | false }`.
+
+### Validation rules
+
+| Field | Rules |
+| --- | --- |
+| `name` | required, 1–150 chars |
+| `url` | required, valid `http`/`https` URL, ≤ 2048 chars (other protocols rejected) |
+| `method` | one of `GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS` (upper-cased before storing) |
+| `expected_status_code` | integer 100–599 |
+| `check_interval` | integer 1–1440 (minutes) |
+| `timeout` | integer 1–120000 (milliseconds) |
+
+Deleting responds with `200 OK` and `{ "success": true, "message": "Monitor deleted successfully" }`.
+Unknown IDs return `404`; non-numeric IDs return `400`.
 
 ## Environment Variables
 
