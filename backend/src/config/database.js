@@ -2,11 +2,11 @@ const { Sequelize } = require("sequelize");
 const env = require("./env");
 
 /**
- * Shared Sequelize instance.
+ * Shared Sequelize instance used by the models and by the CLI config.
  *
- * Phase 1 only prepares the connection. Models, migrations and
- * sequelize.sync() are intentionally left for a later phase, so nothing
- * here connects to MySQL on startup.
+ * Requiring this file does not open a connection; Sequelize connects
+ * lazily on the first query. Schema changes are applied through
+ * migrations (src/migrations), not sequelize.sync().
  */
 const sequelize = new Sequelize(
   env.db.name,

@@ -2,7 +2,7 @@
 
 PulseCheck is a lightweight API uptime and health monitoring platform designed to monitor HTTP endpoints, track response times, detect downtime, record incidents, and calculate uptime.
 
-> **Status:** Phase 1 — project setup only. The features below are planned and will be implemented in later phases.
+> **Status:** Phase 2 — MySQL database schema (Sequelize models + migrations). API endpoints and monitoring logic are still to come. The features below are planned and will be implemented in later phases.
 
 ## Planned Features
 
@@ -65,9 +65,74 @@ MySQL
 pulsecheck/
 ├── frontend/      # Next.js application (App Router, JavaScript)
 ├── backend/       # Express application (JavaScript)
+│   └── src/
+│       ├── config/       # env + Sequelize configuration
+│       ├── models/       # Sequelize models (Monitor, HealthCheck, Incident)
+│       └── migrations/   # Sequelize migrations
 ├── README.md
 └── .gitignore
 ```
+
+## Database Schema
+
+```text
+                  monitors
+                     │
+             ┌───────┴───────┐
+             ▼               ▼
+       health_checks      incidents
+```
+
+- **monitors** — one row per HTTP endpoint being watched. Holds the request
+  config (`url`, `method`, `expected_status_code`, `timeout`), the schedule
+  (`check_interval`, in minutes), the current `status`
+  (`UP` / `DOWN` / `UNKNOWN`), and an `is_active` flag.
+- **health_checks** — one row per check performed against a monitor. Records
+  the outcome (`status` `UP` / `DOWN`), the HTTP `status_code`, the
+  `response_time` in milliseconds, any `error_message`, and `checked_at`.
+- **incidents** — one row per downtime period for a monitor. Tracks `status`
+  (`OPEN` / `RESOLVED`), the `reason`, `started_at`, and `resolved_at`.
+
+Relationships:
+
+- `Monitor` has many `HealthCheck` and many `Incident` (foreign key `monitor_id`).
+- `HealthCheck` and `Incident` each belong to one `Monitor`.
+- Foreign keys use `ON DELETE CASCADE` / `ON UPDATE CASCADE`, so removing a
+  monitor removes its checks and incidents.
+
+## Database Setup
+
+```text
+Database:      MySQL
+Database name: pulsecheck
+```
+
+The database itself is not created automatically. Create it once:
+
+```sql
+CREATE DATABASE pulsecheck;
+```
+
+Then, from `backend/` (with `.env` configured), run the migrations:
+
+```bash
+npx sequelize-cli db:migrate
+```
+
+Roll back the most recent migration:
+
+```bash
+npx sequelize-cli db:migrate:undo
+```
+
+Migration status:
+
+```bash
+npx sequelize-cli db:migrate:status
+```
+
+After migrating, the `pulsecheck` database contains `monitors`,
+`health_checks`, `incidents`, and Sequelize's own `SequelizeMeta` table.
 
 ## Local Setup
 
@@ -124,4 +189,4 @@ DB_USER=root
 DB_PASSWORD=
 ```
 
-The intended local database name is `pulsecheck`. No database, tables, models, or migrations are created in Phase 1.
+The intended local database name is `pulsecheck`. See **Database Setup** above for creating the database and running migrations.

@@ -1,8 +1,9 @@
 /**
- * Configuration consumed by sequelize-cli.
+ * Connection settings consumed by sequelize-cli (db:migrate, etc.).
  *
- * Migrations and models are NOT part of Phase 1, this file only prepares
- * the connection settings for a later phase.
+ * Credentials come from the environment only; see backend/.env.example.
+ * All three environments point at the same local database for this
+ * personal project.
  */
 const dotenv = require("dotenv");
 
