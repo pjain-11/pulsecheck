@@ -2,22 +2,26 @@
 
 PulseCheck is a lightweight API uptime and health monitoring platform designed to monitor HTTP endpoints, track response times, detect downtime, record incidents, and calculate uptime.
 
-> **Status:** Phase 4 — manual health-check engine. PulseCheck can now make a real HTTP request to a monitor's URL, measure it, and record `UP`/`DOWN`. Automatic scheduling and incident logic are still to come. The features below are planned and will be implemented in later phases.
+> **Status:** Phase 5 — web dashboard. PulseCheck is now fully usable from the browser: add/edit/delete monitors, run manual health checks, and view per-monitor history and statistics.
+>
+> **Automatic monitoring is intentionally not implemented yet. Health checks are triggered manually using the "Check Now" button** (no cron, scheduler, or background workers).
 
-## Planned Features
+## Features
 
-These are planned features and will be implemented in later phases:
+Available now:
 
-- API monitoring
-- Manual health checks
-- Automated health checks
-- HTTP status monitoring
-- Response-time tracking
-- Uptime calculation
-- Incident detection
-- Incident resolution
+- Monitoring dashboard (totals, per-monitor status, recent activity)
+- Monitor CRUD (create, edit, delete, activate/deactivate) from the UI
+- Manual health checks — real HTTP request, response-time measurement, `UP`/`DOWN`
+- HTTP status monitoring against an exact expected status code
+- Response-time tracking with a per-monitor trend
 - Health-check history
-- Monitoring dashboard
+- Uptime and check statistics per monitor
+
+Planned for later phases:
+
+- Automated (scheduled) health checks via `node-cron`
+- Incident detection and resolution
 
 ## Tech Stack
 
@@ -50,10 +54,11 @@ node-cron
 ## Architecture
 
 ```text
-Next.js Frontend
+Next.js Frontend  (App Router, client components)
        │
+       │  HTTP / REST   (NEXT_PUBLIC_API_URL)
        ▼
-Node.js + Express
+Node.js + Express  (routes → controllers → services)
        │
        ▼
 Sequelize
@@ -62,22 +67,29 @@ Sequelize
 MySQL
 ```
 
+The frontend never talks to MySQL directly — every read and write goes
+through the Express API. All API calls live in `frontend/services/api.js`.
+
 ## Project Structure
 
 ```text
 pulsecheck/
-├── frontend/      # Next.js application (App Router, JavaScript)
-├── backend/       # Express application (JavaScript)
+├── frontend/                 # Next.js application (App Router, JavaScript)
+│   ├── app/                  # routes: / , /monitors , /monitors/new , /monitors/[id](/edit)
+│   ├── components/           # StatusBadge, MonitorForm, CheckNowButton, HealthHistory, ...
+│   ├── services/api.js       # the only place that calls the backend
+│   └── lib/                  # formatting + data-loading helpers
+├── backend/                  # Express application (JavaScript)
 │   └── src/
-│       ├── config/        # env + Sequelize configuration
-│       ├── models/        # Sequelize models (Monitor, HealthCheck, Incident)
-│       ├── migrations/    # Sequelize migrations
-│       ├── routes/        # Express routers (monitors, health check)
-│       ├── controllers/   # HTTP layer (request -> service -> response)
-│       ├── services/      # monitor CRUD + health-check engine
-│       ├── validations/   # Joi request schemas
-│       ├── middlewares/   # validation + error handling
-│       └── utils/         # helpers (ApiError, urlGuard, ...)
+│       ├── config/           # env + Sequelize configuration
+│       ├── models/           # Sequelize models (Monitor, HealthCheck, Incident)
+│       ├── migrations/       # Sequelize migrations
+│       ├── routes/           # Express routers
+│       ├── controllers/      # HTTP layer (request -> service -> response)
+│       ├── services/         # monitor CRUD + health-check engine + read models
+│       ├── validations/      # Joi request schemas
+│       ├── middlewares/      # validation + error handling
+│       └── utils/            # helpers (ApiError, urlGuard, ...)
 ├── README.md
 └── .gitignore
 ```
@@ -145,43 +157,37 @@ After migrating, the `pulsecheck` database contains `monitors`,
 
 ## Local Setup
 
-### Frontend
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-The frontend runs on the normal Next.js development URL (http://localhost:3000).
+Run the backend first, then the frontend, in two terminals.
 
 ### Backend
 
 ```bash
 cd backend
 npm install
+cp .env.example .env        # then set DB_PASSWORD etc.
+npx sequelize-cli db:migrate
 npm run dev
 ```
 
-The backend runs on:
+The backend runs on http://localhost:5000.
 
-```text
-http://localhost:5000
+### Frontend
+
+```bash
+cd frontend
+npm install
+cp .env.example .env.local  # NEXT_PUBLIC_API_URL defaults to the local backend
+npm run dev
 ```
 
-Health check:
+The frontend runs on http://localhost:3000. Open it in a browser, add a
+monitor, and use **Check Now**.
+
+### API health check
 
 ```text
 GET http://localhost:5000/api/health
-```
-
-Response:
-
-```json
-{
-  "success": true,
-  "message": "PulseCheck API is running"
-}
+→ { "success": true, "message": "PulseCheck API is running" }
 ```
 
 ## Monitor API
@@ -353,9 +359,45 @@ egress controls.
 > Automatic scheduled monitoring will be added in a later phase; for now
 > checks only run when you call this endpoint.
 
+## Read Endpoints (dashboard / detail page)
+
+| Method | Path | Returns |
+| --- | --- | --- |
+| `GET` | `/api/monitors/:id/checks` | recent `health_checks` for the monitor, newest first (`?limit=`, default 50, max 200) |
+| `GET` | `/api/monitors/:id/incidents` | incidents for the monitor, newest first (empty until incident tracking lands) |
+| `GET` | `/api/monitors/:id/stats` | `total_checks`, `successful_checks`, `failed_checks`, `uptime_percentage`, `average_response_time`, `current_status`, `last_check` |
+| `GET` | `/api/activity` | most recent health checks across **all** monitors, each with `monitor_name` (`?limit=`, default 20, max 100) |
+
+`GET /api/monitors` and `GET /api/monitors/:id` also include a `last_check`
+summary object (or `null`).
+
+## Frontend (web dashboard)
+
+The Next.js app in `frontend/` is a client-rendered dashboard over the Express
+API. Pages:
+
+| Route | Purpose |
+| --- | --- |
+| `/` | Dashboard — monitor counts (total / up / down / unknown), monitor list, recent activity feed |
+| `/monitors` | All monitors: status, last response time, last checked, active toggle, **Check Now**, view/edit/delete |
+| `/monitors/new` | Add-monitor form (client-side validation mirroring the backend) |
+| `/monitors/[id]` | Details: status, config, uptime & check stats, response-time trend, health-check history, incidents, **Check Now**, edit / activate / delete |
+| `/monitors/[id]/edit` | Edit the monitor's configuration |
+
+Reusable components: `StatusBadge`, `StatCard`, `MonitorForm`, `CheckNowButton`,
+`HealthHistory`, `ResponseSparkline`, `IncidentList`, `ConfirmDialog`,
+`States` (loading / empty / error). Every backend call goes through
+`frontend/services/api.js`.
+
+**Manual health-check flow:** open a monitor → click **Check Now** → the button
+shows *Checking…* → the frontend calls `POST /api/monitors/:id/check` → the
+backend requests the target URL → the result (`UP`/`DOWN`, HTTP status,
+response time, checked-at, error) is shown and the history / stats refresh.
+There is no polling or auto-refresh.
+
 ## Environment Variables
 
-Copy `backend/.env.example` to `backend/.env` and adjust as needed:
+### Backend — `backend/.env` (copy from `backend/.env.example`)
 
 ```env
 PORT=5000
@@ -368,3 +410,12 @@ DB_PASSWORD=
 ```
 
 The intended local database name is `pulsecheck`. See **Database Setup** above for creating the database and running migrations.
+
+### Frontend — `frontend/.env.local` (copy from `frontend/.env.example`)
+
+```env
+NEXT_PUBLIC_API_URL=http://localhost:5000/api
+```
+
+Base URL of the Express API. `.env.local` is git-ignored; `.env.example` is
+committed.

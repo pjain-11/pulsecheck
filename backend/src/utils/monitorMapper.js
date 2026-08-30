@@ -31,17 +31,39 @@ const toModelAttributes = (body) => {
 
 /**
  * Public representation of a monitor returned by the API.
+ *
+ * When the caller loaded the `healthChecks` association (list / detail
+ * endpoints), a `last_check` summary is attached — `null` if the monitor
+ * has never been checked. Endpoints that don't load it (create / update
+ * / status) simply omit the field.
  */
-const serializeMonitor = (monitor) => ({
-  id: monitor.id,
-  name: monitor.name,
-  url: monitor.url,
-  method: monitor.method,
-  expected_status_code: monitor.expectedStatusCode,
-  status: monitor.status,
-  is_active: monitor.isActive,
-  check_interval: monitor.checkInterval,
-  timeout: monitor.timeout,
-});
+const serializeMonitor = (monitor) => {
+  const data = {
+    id: monitor.id,
+    name: monitor.name,
+    url: monitor.url,
+    method: monitor.method,
+    expected_status_code: monitor.expectedStatusCode,
+    status: monitor.status,
+    is_active: monitor.isActive,
+    check_interval: monitor.checkInterval,
+    timeout: monitor.timeout,
+  };
+
+  if (Array.isArray(monitor.healthChecks)) {
+    const last = monitor.healthChecks[0];
+    data.last_check = last
+      ? {
+          status: last.status,
+          status_code: last.statusCode,
+          response_time: last.responseTime,
+          error_message: last.errorMessage,
+          checked_at: last.checkedAt,
+        }
+      : null;
+  }
+
+  return data;
+};
 
 module.exports = { toModelAttributes, serializeMonitor };

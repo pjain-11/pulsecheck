@@ -1,14 +1,20 @@
 import "./globals.css";
+import Sidebar from "@/components/Sidebar";
 
 export const metadata = {
   title: "PulseCheck",
-  description: "API Uptime & Health Monitoring",
+  description: "API uptime & health monitoring dashboard",
 };
 
 export default function RootLayout({ children }) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <div className="shell">
+          <Sidebar />
+          <main className="main">{children}</main>
+        </div>
+      </body>
     </html>
   );
 }
